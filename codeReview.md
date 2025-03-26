@@ -176,3 +176,111 @@ vector_store = FAISS.from_texts(train_documents, embedding)
 retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 5})
 ```
 
+### RAG 체인 생성
+1. 텍스트 생성 파이프라인 설정
+- pipeline() : Hugging Face transformers 라이브러리에서 제공하는 텍스트 생성 파이프라인
+- text-generation : 텍스트 생성
+- do_sample =  True : 생성된 텍스트에서 확률적으로 단어 선택 (랜덤성)
+- temperature = 0.1 : 낮은 값일수록 더 결정론적인(정확한) 답변 생성
+- return_full_text = False : 입력 프롬프트는 출력에 포함하지 않음
+- max_new_tokens = 64 : 최대 64개 토큰까지 출력
+```
+text_generation_pipeline = pipeline(
+    model=model,
+    tokenizer=tokenizer,
+    task="text-generation",
+    do_sample=True,  # sampling 활성화
+    temperature=0.1,
+    return_full_text=False,
+    max_new_tokens=64,
+)
+```
+2. 프롬프트 템플릿 정의
+```
+prompt_template = """
+### 지침: 당신은 건설공사 사고 상황 데이터를 바탕으로 사고 원인을 분석하고 재발방지 대책을 포함한 대응책을 자동으로 생성하는 AI 모델입니다.
+질문에 대한 답변을 핵심 내용만 요약하여 간략하게 작성하세요.
+- 서론, 배경 설명 또는 추가 설명을 절대 포함하지 마세요.
+- '다음과 같은 조치를 취할 것을 제안합니다:' 와 같은 내용을 포함하지 마세요.
+- 입력받은 내용에 대해 추가, 삭제, 변경 없이 받은 내용만을 그대로 출력합니다.
+
+{context}
+
+### 질문:
+{question}
+
+[/INST]
+
+"""
+```
+3. LLM 연결 + 프롬프트 객체 생성
+- HuggingFacePipeline()을 사용해 텍스트 생성 파이프라인을 LLM 모델로 변환
+- 이후 체인에서 LLM 호출할 수 있도록 래핑
+- 프롬프트 템플릿을 LangChain에서 사용할 수 있도록 객체화
+```
+llm = HuggingFacePipeline(pipeline=text_generation_pipeline)
+
+# 커스텀 프롬프트 생성
+prompt = PromptTemplate(
+    input_variables=["context", "question"],
+    template=prompt_template,
+)
+```
+4. RAG 체인 생성
+- RetrievalQA.from_chain_type()을 사용해 검색 기반 QA 체인 생성
+- chain_type = 'stuff' : 검색된 문서를 단순 결합하여 답변 생성
+- return_source_documents = True : 참고 문서(출처) 반환
+- chain_type_kwargs = {"prompt" : prompt} : 사용자 정의 프롬프트 적용
+```
+qa_chain = RetrievalQA.from_chain_type(
+    llm=llm,
+    chain_type="stuff",  # 단순 컨텍스트 결합 방식 사용
+    retriever=retriever,
+    return_source_documents=True,
+    chain_type_kwargs={"prompt": prompt}  # 커스텀 프롬프트 적용
+)
+```
+
+### AI 모델 답변 생성 및 저장
+- batch : 병렬 실행. GPU 사용 시 병렬 연산 초적화 가능
+- batch_size : 배치 단위로 모델을 실행하여 속도 + 메모리 효율성 증가
+- qa_chain.batch(batch_questions) : 배치 크기만큼 한 번에 여러 개의 질문 처리
+```
+test_results = []
+
+print("테스트 실행 시작... 총 테스트 샘플 수:", len(combined_test_data))
+
+# 배치 크기 설정 (예: 16)
+batch_size = 16
+
+# 데이터 배치 단위로 나누어 처리
+for start_idx in range(0, len(combined_test_data), batch_size):
+    end_idx = min(start_idx + batch_size, len(combined_test_data))
+    batch_questions = combined_test_data['question'][start_idx:end_idx].tolist()
+
+    print(f"\n[샘플 {start_idx + 1}~{end_idx}/{len(combined_test_data)}] 진행 중...")
+
+    # 배치 단위로 모델 호출
+    batch_results = qa_chain.batch(batch_questions)  # 🔥 병렬 처리 가능하도록 batch 사용
+
+    # 결과 저장
+    batch_texts = [res['result'] for res in batch_results]
+    test_results.extend(batch_texts)
+
+print("\n테스트 실행 완료! 총 결과 수:", len(test_results))
+```
+
+### AI 모델 평가 (벡터화)
+- SentenceTransformer(embedding_model_name) : Hugging Face에서 SBERT 모델 로드
+- jhgan/ko-sbert-sts : 한국어 텍스트 유사도 분석에 최적화된 SBERT 모델.
+```
+# submission
+from sentence_transformers import SentenceTransformer
+
+embedding_model_name = "jhgan/ko-sbert-sts"
+embedding = SentenceTransformer(embedding_model_name)
+
+# 문장 리스트를 입력하여 임베딩 생성
+pred_embeddings = embedding.encode(test_results)
+print(pred_embeddings.shape)  # (샘플 개수, 768)
+```
