@@ -90,7 +90,7 @@ combined_training_data = pd.DataFrame(list(combined_training_data))
 ```
    
 2. 테스트 데이터
-- 각 행에 대해 특정 필드를 조합하여 question과 answer 구조 만들기
+- 각 행에 대해 특정 필드를 조합하여 question 구조 만들기
 - question : 사고와 관련된 정보를 자연어 문장으로 정리
 - combined_test_data : 질문이 포함된 Pandas DataFrame 형태로 변환
 ```
@@ -110,3 +110,69 @@ combined_test_data = test.apply(
 # DataFrame으로 변환
 combined_test_data = pd.DataFrame(list(combined_test_data))
 ```
+
+### 모델 설정
+- BitsAndBytesConfig : Hugging Face transformers 라이브러리에서 제공하는 저비트 양자화 설정클래스(메모리 사용량 감소, 속도 향상, 성능 유지를 목적으로 사용)
+- load_in_4bit = True : 모델을 4bit 양자화하여 로드(대형 모델을 로컬 환경에서 실행하기 위함).
+- bnb_4bit_use_double_quant = True : 이중 양자화(효율적인 압축 가능).
+- bnb_4bit_quant_type = "nf4" : Normal Float 4(LLM 성능 저하를 최소화하면서 메모리 절약 가능).
+- bnb_4bit_compute_dtype = torch.bfloat16 : NVIDIA A100, H100 등 최신 GPU에 최적화
+```
+bnb_config = BitsAndBytesConfig(
+    load_in_4bit = True,
+    bnb_4bit_use_double_quant = True,
+    bnb_4bit_quant_type = "nf4",
+    bnb_4bit_compute_dtype = torch.bfloat16
+)
+```
+
+### LGAI-EXAONE/EXAONE-3.5-2.4B-Instruct 모델
+- LG AI Research에서 개발한 대형 언어 모델
+- 모델 사이즈 : 32B, 7.8B, 2.4B
+- 장점 : 저사양 GPU에서도 훈련 및 배포 가능, long-context processing 가능, 최대 32K 토큰의 긴 문맥 처리 가능
+- 한국어 및 영어 지원
+```
+from transformers import AutoTokenizer
+from transformers import AutoModelForCausalLM
+
+model_id = "LGAI-EXAONE/EXAONE-3.5-2.4B-Instruct"
+
+model = AutoModelForCausalLM.from_pretrained(model_id)
+tokenizer = AutoTokenizer.from_pretrained(model_id, quantization_config=bnb_config, device_map="auto")
+```
+
+### FAISS 기반 벡터 스토어 생성
+1. 훈련 데이터 준비
+- conbined_training_data에서 질문과 답변 리스트 가져옴.
+- tolist()를 사용해 Pandas 시리즈를 Python 리스트로 변환.
+- 각 질문과 답변을 Q&A 포맷의 텍스트 문서로 변환.
+- zip(train_questions_prevention, train_answers_prevention) : 질문과 답변을 쌍으로 처리
+2. 임베딩 모델 정의
+- jhgan/ko-sbert-nli : Sentence-BERT 기반의 한국어 문장 임베딩 모델(=Hugging Face에서 제공하는 한글 문장 의미 분석 최적화 모델).
+3. 벡터 스토어 생성
+- FAISS.from_texts() : 텍스트 데이터를 벡터화하여 FAISS 저장소에 추가
+- FAISS : 대규모 벡터 검색을 효율적으로 수행하는 라이브러리. 유사한 문서를 빠르게 찾기 위한 벡터 인덱싱 지원.
+- 훈련 데이터를 벡터로 변환하여 FAISS에 저장
+4. Retriever 정의(유사 문서 검색)
+```
+# vector store 생성
+# Train 데이터 준비
+train_questions_prevention = combined_training_data['question'].tolist()
+train_answers_prevention = combined_training_data['answer'].tolist()
+
+train_documents = [
+    f"Q: {q1}\nA: {a1}"
+    for q1, a1 in zip(train_questions_prevention, train_answers_prevention)
+]
+
+# 임베딩 생성
+embedding_model_name = "jhgan/ko-sbert-nli"  # 임베딩 모델 선택
+embedding = HuggingFaceEmbeddings(model_name=embedding_model_name)
+
+# 벡터 스토어에 문서 추가
+vector_store = FAISS.from_texts(train_documents, embedding)
+
+# Retriever 정의
+retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 5})
+```
+
