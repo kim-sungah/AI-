@@ -42,9 +42,9 @@ load = loader.load()
 
 ### 데이터 로드 및 전처리
 - 데이터 전처리
-  1. 공사 종류 컬럼 분할 : 공사종류 열의 값을 '/' 기준으로 나누기 (대분류 or 중분류)
-  2. 공종 컬럼 분할 : 공종 열을 '>' 기준으로 나누기 (대분류 or 중분류)
-  3. 사고객체 컬럼 분할 : 사고객체 열을 '>' 기준으로 나누기 (대분류 or 중분류)
+1. 공사 종류 컬럼 분할 : 공사종류 열의 값을 '/' 기준으로 나누기 (대분류 or 중분류)
+2. 공종 컬럼 분할 : 공종 열을 '>' 기준으로 나누기 (대분류 or 중분류)
+3. 사고객체 컬럼 분할 : 사고객체 열을 '>' 기준으로 나누기 (대분류 or 중분류)
 ```
 train = pd.read_csv('/content/drive/MyDrive/Colab Notebooks/data./train.csv', encoding = 'utf-8-sig')
 test = pd.read_csv('/content/drive/MyDrive/Colab Notebooks/data./test.csv', encoding = 'utf-8-sig')
@@ -65,11 +65,11 @@ test['사고객체(중분류)'] = test['사고객체'].str.split('>').str[1]
 ```
 
 ### 데이터프레임 기반 QA 형식 데이터셋 생성
+1. 훈련 데이터
 - 각 행에 대해 특정 필드를 조합하여 question과 answer 구조 만들기
 - question : 사고와 관련된 정보를 자연어 문장으로 정리
 - answer : 해당 사고의 '재발방지대책 및 향후조치계획' 저장
-- combined_data : 질문과 답변이 포함된 Pandas DataFrame 형태로 변환
-1. 훈련 데이터
+- combined_training_data : 질문과 답변이 포함된 Pandas DataFrame 형태로 변환
 ```
 combined_training_data = train.apply(
      lambda row: {
@@ -89,8 +89,10 @@ combined_training_data = train.apply(
 combined_training_data = pd.DataFrame(list(combined_training_data))
 ```
    
-
 2. 테스트 데이터
+- 각 행에 대해 특정 필드를 조합하여 question과 answer 구조 만들기
+- question : 사고와 관련된 정보를 자연어 문장으로 정리
+- combined_test_data : 질문이 포함된 Pandas DataFrame 형태로 변환
 ```
 combined_test_data = test.apply(
     lambda row: {
